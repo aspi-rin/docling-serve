@@ -124,7 +124,7 @@ def _parse_standard_pdf_opts(
     pipeline_options.table_structure_options.mode = TableFormerMode(request.table_mode)
 
     if request.image_export_mode != ImageRefMode.PLACEHOLDER:
-        pipeline_options.generate_page_images = True
+        pipeline_options.generate_page_images = False
         if request.image_export_mode == ImageRefMode.REFERENCED:
             pipeline_options.generate_picture_images = True
         if request.images_scale:

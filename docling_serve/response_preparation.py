@@ -36,7 +36,7 @@ def _export_document_as_content(
 
         # Create the different formats
         if export_json:
-            document.json_content = new_doc
+            document.json_content = new_doc.export_to_json(image_mode = ImageRefMode.REFERENCED)
         if export_html:
             document.html_content = new_doc.export_to_html(image_mode=image_mode)
         if export_txt:
@@ -67,8 +67,8 @@ def _export_documents_as_files(
     export_md: bool,
     export_txt: bool,
     export_doctags: bool,
-    image_export_mode: ImageRefMode,
-    md_page_break_placeholder: str,
+    image_export_mode: ImageRefMode = ImageRefMode.REFERENCED,
+    md_page_break_placeholder: str | None = None,
 ):
     success_count = 0
     failure_count = 0
@@ -83,7 +83,7 @@ def _export_documents_as_files(
                 fname = output_dir / f"{doc_filename}.json"
                 _log.info(f"writing JSON output to {fname}")
                 conv_res.document.save_as_json(
-                    filename=fname, image_mode=image_export_mode
+                    filename=fname, image_mode=ImageRefMode.REFERENCED
                 )
 
             # Export HTML format:

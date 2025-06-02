@@ -148,7 +148,7 @@ class ConvertDocumentsOptions(BaseModel):
             examples=[ImageRefMode.EMBEDDED.value],
             # pattern="embedded|placeholder|referenced",
         ),
-    ] = ImageRefMode.EMBEDDED
+    ] = ImageRefMode.REFERENCED
 
     do_ocr: Annotated[
         bool,
