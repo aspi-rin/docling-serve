@@ -46,6 +46,11 @@ docling-serve-cu124-image: Containerfile ## Build docling-serve container image 
 	$(CMD_PREFIX) docker tag ghcr.io/docling-project/docling-serve-cu124:$(TAG) ghcr.io/docling-project/docling-serve-cu124:$(BRANCH_TAG)
 	$(CMD_PREFIX) docker tag ghcr.io/docling-project/docling-serve-cu124:$(TAG) quay.io/docling-project/docling-serve-cu124:$(BRANCH_TAG)
 
+.PHONY: docling-serve-cu124-localmodel-image
+docling-serve-cu124-localmodel-image: Dockerfile
+	$(ECHO_PREFIX) printf "  %-12s Dockerfile\n" "[docling-serve with Cuda 12.4 and copy local model]"
+	$(CMD_PREFIX) docker buildx build --load --build-arg UV_SYNC_EXTRA_ARGS="--no-extra cpu" --build-context models_ctx=$(HOME)/.cache/docling/models --platform linux/amd64 -f Dockerfile -t docling-serve:cu124-localmodel .
+
 .PHONY: action-lint
 action-lint: .action-lint ##      Lint GitHub Action workflows
 .action-lint: $(shell find .github -type f) | action-lint-file
