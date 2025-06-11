@@ -11,6 +11,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     FastAPI,
+    File,
     HTTPException,
     Query,
     UploadFile,
@@ -23,10 +24,14 @@ from fastapi.openapi.docs import (
     get_swagger_ui_html,
     get_swagger_ui_oauth2_redirect_html,
 )
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from transformers import AutoTokenizer
 
-from docling.datamodel.base_models import DocumentStream
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
+from docling_core.types.doc.document import DoclingDocument
+from docling_core.types.io import DocumentStream
 
 from docling_serve.datamodel.callback import (
     ProgressCallbackRequest,
@@ -90,6 +95,15 @@ for handler in root_logger.handlers:  # Iterate through existing handlers
 
 _log = logging.getLogger(__name__)
 
+tokenizer = HuggingFaceTokenizer(
+    tokenizer=AutoTokenizer.from_pretrained("/home/isumi/models/qwen3-32b"), max_tokens=4096
+)
+
+chunker = HybridChunker(
+    tokenizer=tokenizer,
+    merge_peers=True,  # optional, defaults to True
+)
+
 
 # Context manager to initialize and clean up the lifespan of the FastAPI app
 @asynccontextmanager
@@ -131,10 +145,7 @@ def create_app():  # noqa: C901
         version = "0.0.0"
 
     offline_docs_assets = False
-    if (
-        docling_serve_settings.static_path is not None
-        and (docling_serve_settings.static_path).is_dir()
-    ):
+    if docling_serve_settings.static_path is not None and (docling_serve_settings.static_path).is_dir():
         offline_docs_assets = True
         _log.info("Found static assets.")
 
@@ -218,18 +229,14 @@ def create_app():  # noqa: C901
     # Async / Sync helpers #
     ########################
 
-    async def _enque_source(
-        orchestrator: BaseAsyncOrchestrator, conversion_request: ConvertDocumentsRequest
-    ) -> Task:
+    async def _enque_source(orchestrator: BaseAsyncOrchestrator, conversion_request: ConvertDocumentsRequest) -> Task:
         sources: list[TaskSource] = []
         if isinstance(conversion_request, ConvertDocumentFileSourcesRequest):
             sources.extend(conversion_request.file_sources)
         if isinstance(conversion_request, ConvertDocumentHttpSourcesRequest):
             sources.extend(conversion_request.http_sources)
 
-        task = await orchestrator.enqueue(
-            sources=sources, options=conversion_request.options
-        )
+        task = await orchestrator.enqueue(sources=sources, options=conversion_request.options)
         return task
 
     async def _enque_file(
@@ -250,9 +257,7 @@ def create_app():  # noqa: C901
         task = await orchestrator.enqueue(sources=file_sources, options=options)
         return task
 
-    async def _wait_task_complete(
-        orchestrator: BaseAsyncOrchestrator, task_id: str
-    ) -> bool:
+    async def _wait_task_complete(orchestrator: BaseAsyncOrchestrator, task_id: str) -> bool:
         start_time = time.monotonic()
         while True:
             task = await orchestrator.task_status(task_id=task_id)
@@ -301,12 +306,8 @@ def create_app():  # noqa: C901
         orchestrator: Annotated[BaseAsyncOrchestrator, Depends(get_async_orchestrator)],
         conversion_request: ConvertDocumentsRequest,
     ):
-        task = await _enque_source(
-            orchestrator=orchestrator, conversion_request=conversion_request
-        )
-        success = await _wait_task_complete(
-            orchestrator=orchestrator, task_id=task.task_id
-        )
+        task = await _enque_source(orchestrator=orchestrator, conversion_request=conversion_request)
+        success = await _wait_task_complete(orchestrator=orchestrator, task_id=task.task_id)
 
         if not success:
             # TODO: abort task!
@@ -315,9 +316,7 @@ def create_app():  # noqa: C901
                 detail=f"Conversion is taking too long. The maximum wait time is configure as DOCLING_SERVE_MAX_SYNC_WAIT={docling_serve_settings.max_sync_wait}.",
             )
 
-        result = await orchestrator.task_result(
-            task_id=task.task_id, background_tasks=background_tasks
-        )
+        result = await orchestrator.task_result(task_id=task.task_id, background_tasks=background_tasks)
         if result is None:
             raise HTTPException(
                 status_code=404,
@@ -339,16 +338,10 @@ def create_app():  # noqa: C901
         background_tasks: BackgroundTasks,
         orchestrator: Annotated[BaseAsyncOrchestrator, Depends(get_async_orchestrator)],
         files: list[UploadFile],
-        options: Annotated[
-            ConvertDocumentsOptions, FormDepends(ConvertDocumentsOptions)
-        ],
+        options: Annotated[ConvertDocumentsOptions, FormDepends(ConvertDocumentsOptions)],
     ):
-        task = await _enque_file(
-            orchestrator=orchestrator, files=files, options=options
-        )
-        success = await _wait_task_complete(
-            orchestrator=orchestrator, task_id=task.task_id
-        )
+        task = await _enque_file(orchestrator=orchestrator, files=files, options=options)
+        success = await _wait_task_complete(orchestrator=orchestrator, task_id=task.task_id)
 
         if not success:
             # TODO: abort task!
@@ -357,15 +350,31 @@ def create_app():  # noqa: C901
                 detail=f"Conversion is taking too long. The maximum wait time is configure as DOCLING_SERVE_MAX_SYNC_WAIT={docling_serve_settings.max_sync_wait}.",
             )
 
-        result = await orchestrator.task_result(
-            task_id=task.task_id, background_tasks=background_tasks
-        )
+        result = await orchestrator.task_result(task_id=task.task_id, background_tasks=background_tasks)
         if result is None:
             raise HTTPException(
                 status_code=404,
                 detail="Task result not found. Please wait for a completion status.",
             )
         return result
+
+    @app.post("/v1alpha/chunk")
+    async def chunk_json(file: UploadFile = File(...)):
+        if file.filename is None or not file.filename.endswith(".json"):
+            raise HTTPException(status_code=400, detail="Only JSON files are supported.")
+        try:
+            contents = await file.read()
+            doc = DoclingDocument.model_validate_json(contents.decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON file: {e}")
+        chunk_iter = chunker.chunk(dl_doc=doc)
+        chunks = list(chunk_iter)
+        result = {}
+        for i, chunk in enumerate(chunks):
+            ser_txt = chunker.contextualize(chunk=chunk)
+            ser_tokens = tokenizer.count_tokens(ser_txt)
+            result[str(i)] = {"content": ser_txt, "tokens": ser_tokens}
+        return JSONResponse(content=result)
 
     # Convert a document from URL(s) using the async api
     @app.post(
@@ -376,12 +385,8 @@ def create_app():  # noqa: C901
         orchestrator: Annotated[BaseAsyncOrchestrator, Depends(get_async_orchestrator)],
         conversion_request: ConvertDocumentsRequest,
     ):
-        task = await _enque_source(
-            orchestrator=orchestrator, conversion_request=conversion_request
-        )
-        task_queue_position = await orchestrator.get_queue_position(
-            task_id=task.task_id
-        )
+        task = await _enque_source(orchestrator=orchestrator, conversion_request=conversion_request)
+        task_queue_position = await orchestrator.get_queue_position(task_id=task.task_id)
         return TaskStatusResponse(
             task_id=task.task_id,
             task_status=task.task_status,
@@ -398,16 +403,10 @@ def create_app():  # noqa: C901
         orchestrator: Annotated[BaseAsyncOrchestrator, Depends(get_async_orchestrator)],
         background_tasks: BackgroundTasks,
         files: list[UploadFile],
-        options: Annotated[
-            ConvertDocumentsOptions, FormDepends(ConvertDocumentsOptions)
-        ],
+        options: Annotated[ConvertDocumentsOptions, FormDepends(ConvertDocumentsOptions)],
     ):
-        task = await _enque_file(
-            orchestrator=orchestrator, files=files, options=options
-        )
-        task_queue_position = await orchestrator.get_queue_position(
-            task_id=task.task_id
-        )
+        task = await _enque_file(orchestrator=orchestrator, files=files, options=options)
+        task_queue_position = await orchestrator.get_queue_position(task_id=task.task_id)
         return TaskStatusResponse(
             task_id=task.task_id,
             task_status=task.task_status,
@@ -423,9 +422,7 @@ def create_app():  # noqa: C901
     async def task_status_poll(
         orchestrator: Annotated[BaseAsyncOrchestrator, Depends(get_async_orchestrator)],
         task_id: str,
-        wait: Annotated[
-            float, Query(help="Number of seconds to wait for a completed status.")
-        ] = 0.0,
+        wait: Annotated[float, Query(help="Number of seconds to wait for a completed status.")] = 0.0,
     ):
         try:
             task = await orchestrator.task_status(task_id=task_id, wait=wait)
@@ -452,9 +449,7 @@ def create_app():  # noqa: C901
 
         if task_id not in orchestrator.tasks:
             await websocket.send_text(
-                WebsocketMessage(
-                    message=MessageKind.ERROR, error="Task not found."
-                ).model_dump_json()
+                WebsocketMessage(message=MessageKind.ERROR, error="Task not found.").model_dump_json()
             )
             await websocket.close()
             return
@@ -473,14 +468,10 @@ def create_app():  # noqa: C901
                 task_meta=task.processing_meta,
             )
             await websocket.send_text(
-                WebsocketMessage(
-                    message=MessageKind.CONNECTION, task=task_response
-                ).model_dump_json()
+                WebsocketMessage(message=MessageKind.CONNECTION, task=task_response).model_dump_json()
             )
             while True:
-                task_queue_position = await orchestrator.get_queue_position(
-                    task_id=task_id
-                )
+                task_queue_position = await orchestrator.get_queue_position(task_id=task_id)
                 task_response = TaskStatusResponse(
                     task_id=task.task_id,
                     task_status=task.task_status,
@@ -488,9 +479,7 @@ def create_app():  # noqa: C901
                     task_meta=task.processing_meta,
                 )
                 await websocket.send_text(
-                    WebsocketMessage(
-                        message=MessageKind.UPDATE, task=task_response
-                    ).model_dump_json()
+                    WebsocketMessage(message=MessageKind.UPDATE, task=task_response).model_dump_json()
                 )
                 # each client message will be interpreted as a request for update
                 msg = await websocket.receive_text()
@@ -517,9 +506,7 @@ def create_app():  # noqa: C901
         background_tasks: BackgroundTasks,
         task_id: str,
     ):
-        result = await orchestrator.task_result(
-            task_id=task_id, background_tasks=background_tasks
-        )
+        result = await orchestrator.task_result(task_id=task_id, background_tasks=background_tasks)
         if result is None:
             raise HTTPException(
                 status_code=404,
@@ -542,9 +529,7 @@ def create_app():  # noqa: C901
         except TaskNotFoundError:
             raise HTTPException(status_code=404, detail="Task not found.")
         except ProgressInvalid as err:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid progress payload: {err}"
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid progress payload: {err}")
 
     #### Clear requests
 
