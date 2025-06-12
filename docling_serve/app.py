@@ -1,6 +1,7 @@
 import asyncio
 import importlib.metadata
 import logging
+import os
 import shutil
 import time
 from contextlib import asynccontextmanager
@@ -95,14 +96,26 @@ for handler in root_logger.handlers:  # Iterate through existing handlers
 
 _log = logging.getLogger(__name__)
 
-tokenizer = HuggingFaceTokenizer(
-    tokenizer=AutoTokenizer.from_pretrained("/home/isumi/models/qwen3-32b"), max_tokens=4096
-)
+qwen3_model_path = os.getenv("QWEN3_PATH")
+if qwen3_model_path is None:
+    _log.error("Environment variable QWEN3_PATH is not set.")
+    # raise ValueError("Environment variable QWEN3_PATH is not set.")
+    # qwen3_model_path = "/default/path/to/qwen3-32b"
 
-chunker = HybridChunker(
-    tokenizer=tokenizer,
-    merge_peers=True,  # optional, defaults to True
-)
+if qwen3_model_path:
+    tokenizer = HuggingFaceTokenizer(tokenizer=AutoTokenizer.from_pretrained(qwen3_model_path), max_tokens=4096)
+else:
+    tokenizer = None
+    _log.warning("Tokenizer could not be initialized because QWEN3_PATH is not set.")
+
+if tokenizer:
+    chunker = HybridChunker(
+        tokenizer=tokenizer,
+        merge_peers=True,  # optional, defaults to True
+    )
+else:
+    chunker = None
+    _log.warning("Chunker could not be initialized because tokenizer is not available.")
 
 
 # Context manager to initialize and clean up the lifespan of the FastAPI app

@@ -36,9 +36,9 @@ ENV \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/app-root \
-    DOCLING_SERVE_ARTIFACTS_PATH=/opt/app-root/src/.cache/docling/models
+    DOCLING_SERVE_ARTIFACTS_PATH=/opt/app-root/src/.cache/docling/models \
+    QWEN3_PATH=/opt/app-root/src/.cache/docling/qwen3-32b
 
-# ——— 将宿主机模型路径作为 build-arg，默认给一个占位值 ———
 ARG MODEL_SRC_DIR=/tmp/empty_docling_models
 
 ARG UV_SYNC_EXTRA_ARGS=""
@@ -58,9 +58,14 @@ RUN --mount=from=ghcr.io/astral-sh/uv:0.6.1,source=/uv,target=/bin/uv \
 # 说明：需要 BuildKit 支持（Docker 23.x 默认开启；经典 docker 请先 export DOCKER_BUILDKIT=1）
 RUN --mount=type=bind,from=models_ctx,target=/tmp/host_models,ro \
     mkdir -p "${DOCLING_SERVE_ARTIFACTS_PATH}" && \
-    cp -R /tmp/host_models/* "${DOCLING_SERVE_ARTIFACTS_PATH}" && \
+    cp -R /tmp/host_models/docling-models/* "${DOCLING_SERVE_ARTIFACTS_PATH}" && \
     chown -R 1001:0 "${DOCLING_SERVE_ARTIFACTS_PATH}" && \
-    chmod -R g=u "${DOCLING_SERVE_ARTIFACTS_PATH}"
+    chmod -R g=u "${DOCLING_SERVE_ARTIFACTS_PATH}" &&\
+    mkdir -p "${QWEN3_PATH}" && \
+    cp -R /tmp/host_models/qwen3-32b/* "${QWEN3_PATH}" && \
+    chown -R 1001:0 "${QWEN3_PATH}" && \
+    chmod -R g=u "${QWEN3_PATH}"
+
 
 COPY --chown=1001:0 ./docling_serve ./docling_serve
 RUN --mount=from=ghcr.io/astral-sh/uv:0.6.1,source=/uv,target=/bin/uv \
