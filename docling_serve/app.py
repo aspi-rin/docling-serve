@@ -390,12 +390,21 @@ def create_app():  # noqa: C901
             doc = DoclingDocument.model_validate_json(contents.decode("utf-8"))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON file: {e}")
+
+        if chunker is None:
+            raise HTTPException(
+                status_code=500, detail="Chunker is not initialized. Please check QWEN3_PATH environment variable."
+            )
+
         chunk_iter = chunker.chunk(dl_doc=doc)
         chunks = list(chunk_iter)
         result = {}
         for i, chunk in enumerate(chunks):
             ser_txt = chunker.contextualize(chunk=chunk)
-            ser_tokens = tokenizer.count_tokens(ser_txt)
+            if tokenizer is not None:
+                ser_tokens = tokenizer.count_tokens(ser_txt)
+            else:
+                ser_tokens = None
             result[str(i)] = {"content": ser_txt, "tokens": ser_tokens}
         return JSONResponse(content=result)
 

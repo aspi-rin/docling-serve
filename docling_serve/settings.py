@@ -10,9 +10,7 @@ from docling_serve.datamodel.engines import AsyncEngine
 
 
 class UvicornSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="UVICORN_", env_file=".env", extra="allow"
-    )
+    model_config = SettingsConfigDict(env_prefix="UVICORN_", env_file=".env", extra="allow")
 
     host: str = "0.0.0.0"
     port: int = 5001
@@ -49,7 +47,7 @@ class DoclingServeSettings(BaseSettings):
     max_num_pages: int = sys.maxsize
     max_file_size: int = sys.maxsize
 
-    max_sync_wait: int = 120  # 2 minutes
+    max_sync_wait: int = 600  # 10 minutes
 
     cors_origins: list[str] = ["*"]
     cors_methods: list[str] = ["*"]

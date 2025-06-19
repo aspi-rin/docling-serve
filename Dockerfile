@@ -1,13 +1,12 @@
 ARG BASE_IMAGE=quay.io/sclorg/python-312-c9s:c9s
-
 FROM ${BASE_IMAGE}
 
-USER 0
+
 
 ###################################################################################################
 # OS Layer                                                                                        #
 ###################################################################################################
-
+USER 0
 RUN --mount=type=bind,source=os-packages.txt,target=/tmp/os-packages.txt \
     dnf -y install --best --nodocs --setopt=install_weak_deps=False dnf-plugins-core && \
     dnf config-manager --best --nodocs --setopt=install_weak_deps=False --save && \
@@ -24,6 +23,8 @@ ENV TESSDATA_PREFIX=/usr/share/tesseract/tessdata/
 ###################################################################################################
 # Docling layer                                                                                   #
 ###################################################################################################
+COPY --from=ghcr.io/astral-sh/uv:0.6.1 /uv /usr/bin/uv
+RUN chmod +x /usr/bin/uv
 
 USER 1001
 WORKDIR /opt/app-root/src
