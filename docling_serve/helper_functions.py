@@ -15,11 +15,7 @@ def is_pydantic_model(type_):
         origin = get_origin(type_)
         if origin is Union:
             args = get_args(type_)
-            return any(
-                inspect.isclass(arg) and issubclass(arg, BaseModel)
-                for arg in args
-                if arg is not type(None)
-            )
+            return any(inspect.isclass(arg) and issubclass(arg, BaseModel) for arg in args if arg is not type(None))
 
     except Exception:
         pass
@@ -36,7 +32,7 @@ def FormDepends(cls: type[BaseModel]):
         annotation = model_field.annotation
         description = model_field.description
         default = (
-            Form(..., description=description)
+            Form(..., description=description, examples=model_field.examples)
             if model_field.is_required()
             else Form(
                 model_field.default,
@@ -49,16 +45,11 @@ def FormDepends(cls: type[BaseModel]):
         if is_pydantic_model(annotation):
             annotation = str
             default = Form(
-                None
-                if model_field.default is None
-                else json.dumps(model_field.default.model_dump(mode="json")),
+                None if model_field.default is None else json.dumps(model_field.default.model_dump(mode="json")),
                 description=description,
                 examples=None
                 if not model_field.examples
-                else [
-                    json.dumps(ex.model_dump(mode="json"))
-                    for ex in model_field.examples
-                ],
+                else [json.dumps(ex.model_dump(mode="json")) for ex in model_field.examples],
             )
 
         new_parameters.append(
